@@ -26,6 +26,10 @@ services:
       - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}
       - bootstrap.memory_lock=${ES_MEMORY_LOCK:-false}
       - ELASTIC_PASSWORD=${ES_PASSWORD:-}
+      - http.cors.enabled=true
+      - http.cors.allow-origin=/https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?/
+      - http.cors.allow-headers=X-Requested-With,Content-Type,Content-Length,Authorization
+      - http.cors.allow-credentials=true
     ulimits:
       nofile:
         soft: 65536
@@ -91,6 +95,20 @@ services:
       - logger-client
     ports:
       - "${FRONTEND_PORT:-8081}:80"
+    networks:
+      - monitoring
+
+  elasticvue:
+    image: cars10/elasticvue:latest
+    container_name: elasticvue
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTICVUE_CLUSTERS=[{"name":"es-prometheus-demo","uri":"http://localhost:${ES_HTTP_PORT:-9200}","username":"${ELASTICSEARCH_USERNAME:-}","password":"${ELASTICSEARCH_PASSWORD:-}"}]
+    ports:
+      - "${ELASTICVUE_PORT:-8082}:8080"
     networks:
       - monitoring
 
