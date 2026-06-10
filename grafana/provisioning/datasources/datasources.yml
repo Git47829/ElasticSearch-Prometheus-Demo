@@ -1,0 +1,28 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  - name: Elasticsearch
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: testlog
+    editable: true
+    jsonData:
+      index: testlog
+      timeField: "@timestamp"
+      esVersion: "8.13.4"
+      maxConcurrentShardRequests: 5
+      logMessageField: payload
+      logLevelField: payload

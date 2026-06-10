@@ -4,7 +4,7 @@ services:
     container_name: prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -22,9 +22,10 @@ services:
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.security.enabled=${ES_XPACK_SECURITY:-false}
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}
       - bootstrap.memory_lock=true
+      - ELASTIC_PASSWORD=${ES_PASSWORD:-}
     ulimits:
       memlock:
         soft: -1
@@ -33,10 +34,60 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "9200:9200"
-      - "9300:9300"
+      - "${ES_HTTP_PORT:-9200}:9200"
+      - "${ES_TRANSPORT_PORT:-9300}:9300"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - monitoring
+
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    container_name: elasticsearch-exporter
+    restart: unless-stopped
+    command:
+      - "--es.uri=${ES_EXPORTER_URI:-http://elasticsearch:9200}"
+      - "--es.all"
+      - "--es.indices"
+      - "--es.indices_settings"
+      - "--es.indices_mappings"
+      - "--es.shards"
+      - "--es.cluster_settings"
+      - "--es.snapshots"
+    depends_on:
+      - elasticsearch
+    ports:
+      - "${ES_EXPORTER_PORT:-9114}:9114"
+    networks:
+      - monitoring
+
+  logger-client:
+    build:
+      context: ./logger-client
+    container_name: logger-client
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+      - ELASTICSEARCH_API_KEY=${ELASTICSEARCH_API_KEY:-}
+      - PORT=8080
+    ports:
+      - "${LOGGER_PORT:-8080}:8080"
+    networks:
+      - monitoring
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: logger-frontend
+    restart: unless-stopped
+    depends_on:
+      - logger-client
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
     networks:
       - monitoring
 
@@ -48,10 +99,11 @@ services:
       - prometheus
       - elasticsearch
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=${GRAFANA_ALLOW_SIGN_UP:-false}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
