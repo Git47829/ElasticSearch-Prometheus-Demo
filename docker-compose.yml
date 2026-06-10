@@ -27,7 +27,6 @@ services:
       - bootstrap.memory_lock=${ES_MEMORY_LOCK:-false}
       - ELASTIC_PASSWORD=${ES_PASSWORD:-}
       - http.cors.enabled=true
-      - http.cors.allow-origin=/https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?/
       - http.cors.allow-methods=OPTIONS,HEAD,GET,POST,PUT,DELETE
       - http.cors.allow-headers=X-Requested-With,Content-Type,Content-Length,Authorization
       - http.cors.allow-credentials=true
