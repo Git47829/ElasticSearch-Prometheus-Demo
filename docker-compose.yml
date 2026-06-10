@@ -28,8 +28,6 @@ services:
       - ELASTIC_PASSWORD=${ES_PASSWORD:-}
       - http.cors.enabled=true
       - http.cors.allow-methods=OPTIONS,HEAD,GET,POST,PUT,DELETE
-      - http.cors.allow-headers=X-Requested-With,Content-Type,Content-Length,Authorization
-      - http.cors.allow-credentials=true
     ulimits:
       nofile:
         soft: 65536
