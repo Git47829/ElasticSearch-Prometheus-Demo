@@ -35,6 +35,12 @@ services:
       - "${ES_TRANSPORT_PORT:-9300}:9300"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     networks:
       - monitoring
 
@@ -49,9 +55,9 @@ services:
       - "--es.indices_settings"
       - "--es.indices_mappings"
       - "--es.shards"
-      - "--es.snapshots"
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
     ports:
       - "${ES_EXPORTER_PORT:-9114}:9114"
     networks:
@@ -63,7 +69,8 @@ services:
     container_name: logger-client
     restart: unless-stopped
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
     environment:
       - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
       - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-}

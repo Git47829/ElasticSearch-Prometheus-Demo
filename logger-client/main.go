@@ -57,10 +57,18 @@ func setupElasticSearchConnection() (*elasticsearch.TypedClient, error) {
 		return nil, err
 	}
 
-	if _, err := client.Info().Do(context.Background()); err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 1; attempt <= 30; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, lastErr = client.Info().Do(ctx)
+		cancel()
+		if lastErr == nil {
+			return client, nil
+		}
+		log.Printf("elasticsearch not ready (attempt %d/30): %v", attempt, lastErr)
+		time.Sleep(5 * time.Second)
 	}
-	return client, nil
+	return nil, lastErr
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
