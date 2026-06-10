@@ -17,7 +17,7 @@
   button { padding: .5rem 1rem; cursor: pointer; border-radius: 4px; border: 1px solid #888; background: #fff; color: #111; }
   button.start { background: #2c7a3e; color: #fff; border-color: #1f5a2d; }
   button.stop  { background: #c8392b; color: #fff; border-color: #8c281f; }
-  .status-bar { display: flex; gap: 1.5rem; padding: .6rem 1rem; background: #f1f1f1; border-radius: 6px; margin-bottom: 1rem; align-items: center; }
+  .status-bar { display: flex; gap: 1.5rem; padding: .6rem 1rem; background: #f1f1f1; border-radius: 6px; margin-bottom: 1rem; align-items: center; flex-wrap: wrap; }
   .pill { padding: 2px 10px; border-radius: 10px; color: #fff; font-size: 12px; font-weight: 600; letter-spacing: .03em; }
   .pill.on { background: #2c7a3e; }
   .pill.off { background: #888; }
@@ -32,26 +32,44 @@
 </head>
 <body x-data='{
     status: { running: false, index: "", counter: 0 },
+    queryStatus: { running: false, index: "", counter: 0, payload: "", size: 0 },
     indexInput: "testlog",
-    rate: 10,
+    queryPayloadInput: "",
+    querySizeInput: 10,
+    indexPos: 25,
+    queryPos: 20,
+    indexMax: 2000,
+    queryMax: 500,
+    posToRate(pos, max) { return Math.max(1, Math.round(Math.pow(max, pos/100))); },
+    get indexRate() { return this.posToRate(this.indexPos, this.indexMax); },
+    get queryRate() { return this.posToRate(this.queryPos, this.queryMax); },
     async refresh() {
       try {
-        const r = await fetch("/api/documents/status");
-        if (r.ok) this.status = await r.json();
+        const [a, b] = await Promise.all([
+          fetch("/api/documents/status").then(r => r.json()),
+          fetch("/api/documents/query/status").then(r => r.json()),
+        ]);
+        this.status = a;
+        this.queryStatus = b;
       } catch(e) {}
     }
   }' x-init="refresh(); setInterval(()=>refresh(), 1000)" hx-swap="none">
 
   <h1>Logger Client</h1>
-  <p>Drive FizzBuzz inserts into Elasticsearch.</p>
+  <p>Drive FizzBuzz inserts and queries against Elasticsearch.</p>
 
   <div class="status-bar">
-    <span>Worker:
+    <span>Index worker:
       <span class="pill" :class="status.running ? 'on' : 'off'"
             x-text="status.running ? 'RUNNING' : 'STOPPED'"></span>
     </span>
-    <span>Index: <strong x-text="status.index || '—'"></strong></span>
-    <span>Counter: <strong x-text="status.counter"></strong></span>
+    <span>Indexed: <strong x-text="status.counter"></strong></span>
+    <span>Query worker:
+      <span class="pill" :class="queryStatus.running ? 'on' : 'off'"
+            x-text="queryStatus.running ? 'RUNNING' : 'STOPPED'"></span>
+    </span>
+    <span>Queries: <strong x-text="queryStatus.counter"></strong></span>
+    <span>Index: <strong x-text="status.index || queryStatus.index || '—'"></strong></span>
   </div>
 
   <fieldset>
@@ -64,13 +82,12 @@
   </fieldset>
 
   <fieldset>
-    <legend>2. Worker control (semaphore)</legend>
+    <legend>2. Index worker (semaphore)</legend>
 
     <form hx-post="/api/documents/start" class="row" x-show="!status.running">
       <label>Index</label>
       <input type="text" name="index" x-model="indexInput" required>
-      <label>Rate</label>
-      <input type="number" name="rate" min="1" max="2000" :value="rate" @input="rate = +$event.target.value">
+      <input type="hidden" name="rate" :value="indexRate">
       <button type="submit" class="start">▶ START (open semaphore)</button>
     </form>
 
@@ -80,20 +97,55 @@
 
     <div class="row">
       <label>Rate</label>
-      <input type="range" min="1" max="2000" step="1"
-             x-model.number="rate"
-             name="rate"
+      <input type="hidden" name="rate" :value="indexRate">
+      <input type="range" min="0" max="100" step="1"
+             x-model.number="indexPos"
              hx-post="/api/documents/rate"
+             hx-include="closest .row"
              hx-trigger="change[Alpine.$data(document.body).status.running] delay:150ms">
-      <span class="rate-value"><span x-text="rate"></span>/s</span>
+      <span class="rate-value"><span x-text="indexRate"></span>/s</span>
     </div>
-    <div class="row" x-show="!status.running" style="color:#888; font-size:12px;">
-      Rate slider live-updates the worker while it is running.
+    <div class="row" style="color:#888; font-size:12px;">
+      Log scale: 1 … <span x-text="indexMax"></span>/s. Slider live-updates while running.
     </div>
   </fieldset>
 
   <fieldset>
-    <legend>3. Query documents</legend>
+    <legend>3. Query worker (semaphore)</legend>
+
+    <form hx-post="/api/documents/query/start" class="row" x-show="!queryStatus.running">
+      <label>Index</label>
+      <input type="text" name="index" x-model="indexInput" required>
+      <label>Payload</label>
+      <input type="text" name="payload" x-model="queryPayloadInput"
+             placeholder="fizz | buzz | fizzbuzz | (empty)">
+      <label>Size</label>
+      <input type="number" name="size" min="1" max="1000" x-model.number="querySizeInput">
+      <input type="hidden" name="rate" :value="queryRate">
+      <button type="submit" class="start">▶ START QUERY WORKER</button>
+    </form>
+
+    <form hx-post="/api/documents/query/stop" class="row" x-show="queryStatus.running">
+      <button type="submit" class="stop">■ STOP QUERY WORKER</button>
+    </form>
+
+    <div class="row">
+      <label>Rate</label>
+      <input type="hidden" name="rate" :value="queryRate">
+      <input type="range" min="0" max="100" step="1"
+             x-model.number="queryPos"
+             hx-post="/api/documents/query/rate"
+             hx-include="closest .row"
+             hx-trigger="change[Alpine.$data(document.body).queryStatus.running] delay:150ms">
+      <span class="rate-value"><span x-text="queryRate"></span>/s</span>
+    </div>
+    <div class="row" style="color:#888; font-size:12px;">
+      Log scale: 1 … <span x-text="queryMax"></span>/s. Payload/size are fixed at start; rate live-updates.
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>4. One-shot query</legend>
     <form hx-get="/api/documents/query" class="row">
       <label>Index</label>
       <input type="text" name="index" x-model="indexInput" required>

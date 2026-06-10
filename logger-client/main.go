@@ -33,6 +33,16 @@ var (
 	doneCh    chan struct{}
 	running   bool
 	workerIdx string
+
+	queryMu      sync.Mutex
+	queryCounter atomic.Int64
+	queryRateCh  chan int
+	queryStopCh  chan struct{}
+	queryDoneCh  chan struct{}
+	queryRunning bool
+	queryIdx     string
+	queryPayload string
+	querySize    int
 )
 
 func setupElasticSearchConnection() (*elasticsearch.TypedClient, error) {
@@ -225,6 +235,147 @@ func workerStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func queryOnce(ctx context.Context, index, payload string, size int) error {
+	req := &search.Request{Size: &size}
+	if payload != "" {
+		req.Query = &types.Query{
+			Match: map[string]types.MatchQuery{
+				"payload": {Query: payload},
+			},
+		}
+	}
+	_, err := esClient.Search().Index(index).Request(req).Do(ctx)
+	return err
+}
+
+func runQueryWorker(index, payload string, size, initialRate int) {
+	defer close(queryDoneCh)
+	ticker := time.NewTicker(time.Second / time.Duration(initialRate))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-queryStopCh:
+			return
+		case newRate := <-queryRateCh:
+			if newRate > 0 {
+				ticker.Reset(time.Second / time.Duration(newRate))
+			}
+		case <-ticker.C:
+			queryCounter.Add(1)
+			if err := queryOnce(context.Background(), index, payload, size); err != nil {
+				log.Printf("query worker err: %v", err)
+			}
+		}
+	}
+}
+
+func startQueryWorker(w http.ResponseWriter, r *http.Request) {
+	index := r.FormValue("index")
+	if index == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "index cannot be NULL")
+		return
+	}
+	rate, err := strconv.Atoi(r.FormValue("rate"))
+	if err != nil || rate <= 0 {
+		writeErr(w, http.StatusUnprocessableEntity, "rate must be positive int")
+		return
+	}
+	payload := r.FormValue("payload")
+	size := 10
+	if s := r.FormValue("size"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n <= 0 {
+			writeErr(w, http.StatusUnprocessableEntity, "size must be positive int")
+			return
+		}
+		if n > 1000 {
+			n = 1000
+		}
+		size = n
+	}
+
+	queryMu.Lock()
+	defer queryMu.Unlock()
+	if queryRunning {
+		writeErr(w, http.StatusConflict, "query worker already running")
+		return
+	}
+
+	queryRateCh = make(chan int, 1)
+	queryStopCh = make(chan struct{})
+	queryDoneCh = make(chan struct{})
+	queryIdx = index
+	queryPayload = payload
+	querySize = size
+	queryRunning = true
+	go runQueryWorker(index, payload, size, rate)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "started",
+		"index":   index,
+		"payload": payload,
+		"size":    size,
+		"rate":    rate,
+	})
+}
+
+func updateQueryRate(w http.ResponseWriter, r *http.Request) {
+	rate, err := strconv.Atoi(r.FormValue("rate"))
+	if err != nil || rate <= 0 {
+		writeErr(w, http.StatusUnprocessableEntity, "rate must be positive int")
+		return
+	}
+
+	queryMu.Lock()
+	defer queryMu.Unlock()
+	if !queryRunning {
+		writeErr(w, http.StatusConflict, "query worker not running")
+		return
+	}
+
+	select {
+	case <-queryRateCh:
+	default:
+	}
+	queryRateCh <- rate
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "rate updated",
+		"rate":   rate,
+	})
+}
+
+func stopQueryWorker(w http.ResponseWriter, r *http.Request) {
+	queryMu.Lock()
+	defer queryMu.Unlock()
+	if !queryRunning {
+		writeErr(w, http.StatusConflict, "query worker not running")
+		return
+	}
+
+	close(queryStopCh)
+	<-queryDoneCh
+	queryRunning = false
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "stopped",
+		"counter": queryCounter.Load(),
+	})
+}
+
+func queryWorkerStatus(w http.ResponseWriter, r *http.Request) {
+	queryMu.Lock()
+	defer queryMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"running": queryRunning,
+		"index":   queryIdx,
+		"payload": queryPayload,
+		"size":    querySize,
+		"counter": queryCounter.Load(),
+	})
+}
+
 func queryDocuments(w http.ResponseWriter, r *http.Request) {
 	index := r.FormValue("index")
 	if index == "" {
@@ -300,6 +451,10 @@ func main() {
 	mux.HandleFunc("POST /documents/stop", stopWorker)
 	mux.HandleFunc("GET /documents/status", workerStatus)
 	mux.HandleFunc("GET /documents/query", queryDocuments)
+	mux.HandleFunc("POST /documents/query/start", startQueryWorker)
+	mux.HandleFunc("POST /documents/query/rate", updateQueryRate)
+	mux.HandleFunc("POST /documents/query/stop", stopQueryWorker)
+	mux.HandleFunc("GET /documents/query/status", queryWorkerStatus)
 
 	log.Printf("listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
