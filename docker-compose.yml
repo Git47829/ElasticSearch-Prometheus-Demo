@@ -49,7 +49,6 @@ services:
       - "--es.indices_settings"
       - "--es.indices_mappings"
       - "--es.shards"
-      - "--es.cluster_settings"
       - "--es.snapshots"
     depends_on:
       - elasticsearch

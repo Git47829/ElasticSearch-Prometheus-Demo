@@ -3,7 +3,7 @@ module logger-client
 go 1.26.4
 
 require (
-	github.com/elastic/go-elasticsearch/v9 v9.4.1
+	github.com/elastic/go-elasticsearch/v8 v8.15.0
 	github.com/joho/godotenv v1.5.1
 )
 
