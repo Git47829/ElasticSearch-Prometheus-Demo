@@ -14,7 +14,7 @@
   label { display: inline-block; min-width: 72px; }
   input[type=text], input[type=number] { padding: 4px 6px; }
   input[type=range] { width: 100%; }
-  button { padding: .5rem 1rem; cursor: pointer; border-radius: 4px; border: 1px solid #888; background: #fff; }
+  button { padding: .5rem 1rem; cursor: pointer; border-radius: 4px; border: 1px solid #888; background: #fff; color: #111; }
   button.start { background: #2c7a3e; color: #fff; border-color: #1f5a2d; }
   button.stop  { background: #c8392b; color: #fff; border-color: #8c281f; }
   .status-bar { display: flex; gap: 1.5rem; padding: .6rem 1rem; background: #f1f1f1; border-radius: 6px; margin-bottom: 1rem; align-items: center; }
@@ -84,8 +84,7 @@
              x-model.number="rate"
              name="rate"
              hx-post="/api/documents/rate"
-             hx-trigger="change delay:150ms"
-             :disabled="!status.running">
+             hx-trigger="change[Alpine.$data(document.body).status.running] delay:150ms">
       <span class="rate-value"><span x-text="rate"></span>/s</span>
     </div>
     <div class="row" x-show="!status.running" style="color:#888; font-size:12px;">
