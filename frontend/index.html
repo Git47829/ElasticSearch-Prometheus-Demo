@@ -169,6 +169,31 @@
     </form>
   </fieldset>
 
+  <fieldset>
+    <legend>5. Raw query (ES DSL)</legend>
+    <form hx-post="/api/documents/query/raw">
+      <div class="row">
+        <label>Index</label>
+        <input type="text" name="index" x-model="indexInput" required>
+        <label><input type="checkbox" name="profile" value="1"> Profile</label>
+        <button type="submit">Run</button>
+      </div>
+      <div class="row">
+        <textarea name="body" rows="10" required
+                  style="width:100%; font-family: ui-monospace, monospace; font-size: 12px; padding: 6px;"
+                  placeholder='Elasticsearch search body JSON'>{
+  "size": 10,
+  "query": {
+    "match": { "payload": "fizz" }
+  }
+}</textarea>
+      </div>
+      <div class="row" style="color:#888; font-size:12px;">
+        Raw Elasticsearch search body. Profile checkbox injects <code>"profile": true</code> into body.
+      </div>
+    </form>
+  </fieldset>
+
   <h2>Response log</h2>
   <div id="log" class="log"></div>
 

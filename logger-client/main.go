@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -445,6 +447,66 @@ func queryDocuments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func queryRaw(w http.ResponseWriter, r *http.Request) {
+	index := r.FormValue("index")
+	if index == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "index cannot be NULL")
+		return
+	}
+	body := strings.TrimSpace(r.FormValue("body"))
+	if body == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "body cannot be NULL")
+		return
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "invalid JSON: "+err.Error())
+		return
+	}
+
+	switch r.FormValue("profile") {
+	case "1", "true", "on":
+		parsed["profile"] = true
+	}
+
+	data, err := json.Marshal(parsed)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	res, err := esClient.Search().Index(index).Raw(bytes.NewReader(data)).Do(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	docs := make([]map[string]any, 0, len(res.Hits.Hits))
+	for _, h := range res.Hits.Hits {
+		var d map[string]any
+		if err := json.Unmarshal(h.Source_, &d); err != nil {
+			log.Printf("unmarshal hit: %v", err)
+			continue
+		}
+		docs = append(docs, d)
+	}
+
+	total := int64(0)
+	if res.Hits.Total != nil {
+		total = res.Hits.Total.Value
+	}
+	resp := map[string]any{
+		"total": total,
+		"hits":  docs,
+		"took":  res.Took,
+	}
+	if res.Profile != nil {
+		resp["profile"] = res.Profile
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func main() {
 	client, err := setupElasticSearchConnection()
 	if err != nil {
@@ -464,6 +526,7 @@ func main() {
 	mux.HandleFunc("POST /documents/stop", stopWorker)
 	mux.HandleFunc("GET /documents/status", workerStatus)
 	mux.HandleFunc("GET /documents/query", queryDocuments)
+	mux.HandleFunc("POST /documents/query/raw", queryRaw)
 	mux.HandleFunc("POST /documents/query/start", startQueryWorker)
 	mux.HandleFunc("POST /documents/query/rate", updateQueryRate)
 	mux.HandleFunc("POST /documents/query/stop", stopQueryWorker)
