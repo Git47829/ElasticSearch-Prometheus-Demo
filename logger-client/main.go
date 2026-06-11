@@ -397,7 +397,16 @@ func queryDocuments(w http.ResponseWriter, r *http.Request) {
 		size = n
 	}
 
+	profile := false
+	switch r.FormValue("profile") {
+	case "1", "true", "on":
+		profile = true
+	}
+
 	req := &search.Request{Size: &size}
+	if profile {
+		req.Profile = &profile
+	}
 	if payload != "" {
 		req.Query = &types.Query{
 			Match: map[string]types.MatchQuery{
@@ -426,10 +435,14 @@ func queryDocuments(w http.ResponseWriter, r *http.Request) {
 	if res.Hits.Total != nil {
 		total = res.Hits.Total.Value
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"total": total,
 		"hits":  docs,
-	})
+	}
+	if profile && res.Profile != nil {
+		resp["profile"] = res.Profile
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func main() {

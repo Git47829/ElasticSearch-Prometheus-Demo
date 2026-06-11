@@ -28,6 +28,17 @@
   .entry .meta { color: #6fc; }
   .entry.err .meta { color: #f88; }
   .rate-value { display: inline-block; min-width: 4em; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .profile { background: #0e1a0e; color: #d6ffd6; padding: .6rem; border-radius: 6px; margin-top: .4rem; font-size: 12px; }
+  .profile h4 { margin: .4rem 0 .2rem; color: #6fc; font-size: 12px; }
+  .pf-node { margin: 2px 0; }
+  .pf-row { display: flex; align-items: center; gap: .5rem; font-family: ui-monospace, monospace; }
+  .pf-bar { flex: 0 0 120px; height: 8px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+  .pf-bar > span { display: block; height: 100%; background: linear-gradient(90deg,#2c7a3e,#c8c83e,#c8392b); }
+  .pf-time { flex: 0 0 80px; text-align: right; color: #ffd; font-variant-numeric: tabular-nums; }
+  .pf-type { color: #6fc; font-weight: 600; }
+  .pf-desc { color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+  .pf-children { margin-left: 1.2rem; border-left: 1px dashed #2a4a2a; padding-left: .5rem; }
+  details.profile-block summary { cursor: pointer; color: #6fc; font-weight: 600; }
 </style>
 </head>
 <body x-data='{
@@ -153,6 +164,7 @@
       <input type="text" name="payload" placeholder="fizz | buzz | fizzbuzz | (empty)">
       <label>Size</label>
       <input type="number" name="size" value="10" min="1" max="1000">
+      <label><input type="checkbox" name="profile" value="1"> Profile</label>
       <button type="submit">Query</button>
     </form>
   </fieldset>
@@ -161,6 +173,89 @@
   <div id="log" class="log"></div>
 
   <script>
+    function fmtTime(ns) {
+      if (ns == null) return '—';
+      if (ns < 1000) return ns + 'ns';
+      if (ns < 1e6) return (ns/1e3).toFixed(1) + 'µs';
+      if (ns < 1e9) return (ns/1e6).toFixed(2) + 'ms';
+      return (ns/1e9).toFixed(2) + 's';
+    }
+    function renderNode(node, rootNs) {
+      const wrap = document.createElement('div');
+      wrap.className = 'pf-node';
+      const row = document.createElement('div');
+      row.className = 'pf-row';
+      const ns = node.time_in_nanos ?? 0;
+      const pct = rootNs > 0 ? Math.min(100, (ns / rootNs) * 100) : 0;
+      const bar = document.createElement('div');
+      bar.className = 'pf-bar';
+      const fill = document.createElement('span');
+      fill.style.width = pct.toFixed(1) + '%';
+      bar.appendChild(fill);
+      const t = document.createElement('span');
+      t.className = 'pf-time';
+      t.textContent = fmtTime(ns);
+      const type = document.createElement('span');
+      type.className = 'pf-type';
+      type.textContent = node.type || node.name || '?';
+      const desc = document.createElement('span');
+      desc.className = 'pf-desc';
+      desc.title = node.description || node.reason || '';
+      desc.textContent = node.description || node.reason || '';
+      row.append(bar, t, type, desc);
+      wrap.appendChild(row);
+      if (node.children && node.children.length) {
+        const kids = document.createElement('div');
+        kids.className = 'pf-children';
+        node.children.forEach(c => kids.appendChild(renderNode(c, rootNs)));
+        wrap.appendChild(kids);
+      }
+      return wrap;
+    }
+    function renderForest(nodes, title, container) {
+      if (!nodes || !nodes.length) return;
+      const h = document.createElement('h4');
+      h.textContent = title;
+      container.appendChild(h);
+      const rootNs = nodes.reduce((m,n) => Math.max(m, n.time_in_nanos ?? 0), 0);
+      nodes.forEach(n => container.appendChild(renderNode(n, rootNs)));
+    }
+    function renderProfile(profile) {
+      const det = document.createElement('details');
+      det.className = 'profile-block';
+      det.open = true;
+      const sum = document.createElement('summary');
+      sum.textContent = 'Profile';
+      det.appendChild(sum);
+      const box = document.createElement('div');
+      box.className = 'profile';
+      (profile.shards || []).forEach((shard, si) => {
+        const sh = document.createElement('div');
+        const sht = document.createElement('h4');
+        sht.textContent = `Shard ${si}: ${shard.id || ''}`;
+        sht.style.color = '#ffd';
+        sh.appendChild(sht);
+        (shard.searches || []).forEach((s, i) => {
+          const sl = document.createElement('div');
+          const lab = document.createElement('div');
+          lab.style.color = '#888';
+          lab.textContent = `search[${i}] rewrite=${fmtTime(s.rewrite_time)}`;
+          sl.appendChild(lab);
+          renderForest(s.query, 'Query', sl);
+          renderForest(s.collector, 'Collectors', sl);
+          sh.appendChild(sl);
+        });
+        if (shard.aggregations && shard.aggregations.length) {
+          renderForest(shard.aggregations, 'Aggregations', sh);
+        }
+        if (shard.fetch) {
+          renderForest([shard.fetch], 'Fetch', sh);
+        }
+        box.appendChild(sh);
+      });
+      det.appendChild(box);
+      return det;
+    }
     document.body.addEventListener('htmx:afterRequest', (evt) => {
       const xhr = evt.detail.xhr;
       const cfg = evt.detail.requestConfig;
@@ -171,13 +266,21 @@
       meta.className = 'meta';
       meta.textContent = `[${time}] ${cfg.verb.toUpperCase()} ${cfg.path} → ${xhr.status}`;
       const body = document.createElement('div');
+      let parsed = null;
       try {
-        body.textContent = JSON.stringify(JSON.parse(xhr.responseText), null, 2);
-      } catch {
-        body.textContent = xhr.responseText;
+        parsed = JSON.parse(xhr.responseText);
+      } catch {}
+      if (parsed && parsed.profile) {
+        const { profile, ...rest } = parsed;
+        body.textContent = JSON.stringify(rest, null, 2);
+        entry.appendChild(meta);
+        entry.appendChild(body);
+        entry.appendChild(renderProfile(profile));
+      } else {
+        body.textContent = parsed ? JSON.stringify(parsed, null, 2) : xhr.responseText;
+        entry.appendChild(meta);
+        entry.appendChild(body);
       }
-      entry.appendChild(meta);
-      entry.appendChild(body);
       const log = document.getElementById('log');
       log.insertBefore(entry, log.firstChild);
     });
